@@ -1,0 +1,306 @@
+Enterprise Software Architecture Documentation
+E-Commerce Platform v3.2.1
+
+Document Information:
+Title: E-Commerce Platform Architecture Documentation
+Version: 3.2.1
+Last Updated: 2025-01-20T14:30:00Z
+Author: Sarah Johnson, Principal Architect
+Reviewers: Michael Chen, David Rodriguez, Lisa Wang
+
+SYSTEM ARCHITECTURE OVERVIEW
+
+Frontend System:
+Name: E-Commerce Web Application
+Description: React-based customer-facing web application with modern UI/UX
+Technology: React
+Version: 2.1.0
+
+Frontend Components:
+
+1. Product Catalog Component
+   Type: page
+   Path: /src/pages/ProductCatalog.tsx
+   Dependencies: ProductService, CartService, AuthService
+
+   Implementation Details:
+   Methods:
+   - fetchProducts (public method)
+     Parameters:
+     - category (string, required)
+     - limit (number, optional, default: 20)
+       Validation: minimum 1, maximum 100
+     - sortBy (string, optional, allowed values: price, name, rating)
+     Return Type: Promise<Product[]>
+
+   - addToCart (private method)
+     Parameters:
+     - productId (string, required, pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$)
+     - quantity (number, required, minimum: 1, maximum: 10)
+     Return Type: boolean
+
+   State Variables:
+   - products (array, initial: [], scope: local)
+   - loading (boolean, initial: false, scope: local)
+   - selectedCategory (string, initial: "all", scope: session)
+
+2. User Authentication Component
+   Type: service
+   Path: /src/services/AuthService.ts
+   Dependencies: TokenManager, ApiClient
+
+   Methods:
+   - login (public method)
+     Parameters:
+     - email (string, required, pattern: ^[^\s@]+@[^\s@]+\.[^\s@]+$)
+     - password (string, required, minimum length: 8, maximum length: 128)
+     Return Type: Promise<AuthToken>
+
+   - validateToken (protected method)
+     Parameters:
+     - token (string, required)
+     Return Type: boolean
+
+Backend System:
+Name: E-Commerce Microservices Platform
+Architecture: microservices
+
+Services:
+
+1. User Service
+   ID: 550e8400-e29b-41d4-a716-446655440001
+   Name: User Management Service
+   Description: Handles user registration, authentication, and profile management
+   Technology: Node.js
+   Port: 3001
+
+   Endpoints:
+   - Path: /api/v1/users/register
+     Method: POST
+     Description: Register new user account
+     Authentication:
+       Required: false
+       Type: none
+
+   - Path: /api/v1/users/profile
+     Method: GET
+     Description: Get user profile information
+     Authentication:
+       Required: true
+       Type: jwt
+       Scopes: profile:read
+       Permissions:
+         Roles: user, admin
+         Security Level: internal
+         Restrictions:
+           Rate Limit:
+             Requests: 100
+             Window: 1h
+             Burst: 10
+
+   - Path: /api/v1/users/{id}
+     Method: PUT
+     Description: Update user profile
+     Authentication:
+       Required: true
+       Type: jwt
+       Scopes: profile:write
+       Permissions:
+         Roles: user, admin
+         Security Level: confidential
+         Restrictions:
+           IP Whitelist: 192.168.1.0/24, 10.0.0.0/8
+           Rate Limit:
+             Requests: 50
+             Window: 1h
+             Burst: 5
+
+   Dependencies:
+   - Service ID: 550e8400-e29b-41d4-a716-446655440002 (Database Service)
+     Type: synchronous
+     Protocol: HTTP
+
+2. Product Service
+   ID: 550e8400-e29b-41d4-a716-446655440003
+   Name: Product Catalog Service
+   Description: Manages product information, inventory, and search functionality
+   Technology: FastAPI
+   Port: 3002
+
+   Endpoints:
+   - Path: /api/v1/products
+     Method: GET
+     Description: List products with filtering and pagination
+     Authentication:
+       Required: false
+
+   - Path: /api/v1/products/{id}
+     Method: GET
+     Description: Get detailed product information
+     Authentication:
+       Required: false
+
+   - Path: /api/v1/products
+     Method: POST
+     Description: Create new product (admin only)
+     Authentication:
+       Required: true
+       Type: bearer
+       Permissions:
+         Roles: admin
+         Security Level: restricted
+
+   Dependencies:
+   - Service ID: 550e8400-e29b-41d4-a716-446655440002
+     Type: synchronous
+     Protocol: HTTP
+   - Service ID: 550e8400-e29b-41d4-a716-446655440004
+     Type: asynchronous
+     Protocol: Message Queue
+
+Database System:
+
+Database Instance 1:
+Name: Primary PostgreSQL Database
+Type: relational
+Technology: PostgreSQL
+Version: 14.2.0
+
+Schema: ecommerce_main
+Tables:
+
+Users Table:
+Name: users
+Columns:
+- id (UUID, not null, primary key)
+- email (VARCHAR(255), not null, unique constraint)
+- password_hash (VARCHAR(255), not null)
+- first_name (VARCHAR(100), nullable)
+- last_name (VARCHAR(100), nullable)
+- created_at (TIMESTAMP, not null, default: CURRENT_TIMESTAMP)
+- updated_at (TIMESTAMP, nullable)
+
+Foreign Key Relationships:
+- None for users table
+
+Constraints:
+- email: unique constraint, pattern validation: ^[^\s@]+@[^\s@]+\.[^\s@]+$
+- password_hash: minimum length 60, maximum length 255
+- created_at: default value CURRENT_TIMESTAMP
+
+Indexes:
+- idx_users_email (columns: email, unique: true, type: btree)
+- idx_users_created_at (columns: created_at, unique: false, type: btree)
+
+Products Table:
+Name: products
+Columns:
+- id (UUID, not null, primary key)
+- name (VARCHAR(255), not null)
+- description (TEXT, nullable)
+- price (DECIMAL(10,2), not null)
+- category_id (UUID, not null)
+- stock_quantity (INTEGER, not null, default: 0)
+- created_at (TIMESTAMP, not null)
+
+Foreign Key Relationships:
+- category_id references categories(id)
+  On Delete: RESTRICT
+  On Update: CASCADE
+
+Constraints:
+- price: minimum value 0.01, maximum value 999999.99
+- stock_quantity: minimum value 0, check constraint >= 0
+- name: minimum length 1, maximum length 255
+
+Indexes:
+- idx_products_category (columns: category_id, unique: false, type: btree)
+- idx_products_price (columns: price, unique: false, type: btree)
+
+Database Instance 2:
+Name: Redis Cache
+Type: key-value
+Technology: Redis
+Version: 7.0.5
+
+Schema: cache_store
+(Redis doesn't use traditional tables, but logical groupings)
+
+DEPLOYMENT CONFIGURATION
+
+Environment: production
+Infrastructure:
+Provider: AWS
+Region: us-west-2
+Resources:
+- Type: compute
+  Specifications:
+    CPU: 4 vCPUs
+    Memory: 16 GB
+    Storage: 100 GB SSD
+    Network: 10 Gbps
+
+- Type: database
+  Specifications:
+    CPU: 2 vCPUs
+    Memory: 8 GB
+    Storage: 500 GB SSD
+    Network: 5 Gbps
+
+Environment: staging
+Infrastructure:
+Provider: AWS
+Region: us-west-2
+Resources:
+- Type: compute
+  Specifications:
+    CPU: 2 vCPUs
+    Memory: 8 GB
+    Storage: 50 GB SSD
+    Network: 1 Gbps
+
+Environment: development
+Infrastructure:
+Provider: DigitalOcean
+Region: nyc3
+Resources:
+- Type: compute
+  Specifications:
+    CPU: 1 vCPU
+    Memory: 2 GB
+    Storage: 25 GB SSD
+    Network: 1 Gbps
+
+TEAM STRUCTURE
+
+Team Members:
+
+1. Sarah Johnson
+   Role: architect
+   Responsibilities: System design, technology decisions, code reviews
+   Systems: frontend, backend, database
+
+2. Michael Chen
+   Role: developer
+   Responsibilities: Frontend development, UI/UX implementation, testing
+   Systems: frontend
+
+3. David Rodriguez
+   Role: developer
+   Responsibilities: Backend API development, database design, performance optimization
+   Systems: backend, database
+
+4. Lisa Wang
+   Role: devops
+   Responsibilities: CI/CD pipeline, infrastructure management, monitoring
+   Systems: deployment
+
+5. James Wilson
+   Role: tester
+   Responsibilities: Quality assurance, automated testing, performance testing
+   Systems: frontend, backend
+
+6. Emily Brown
+   Role: manager
+   Responsibilities: Project coordination, stakeholder communication, resource planning
+   Systems: all systems oversight
